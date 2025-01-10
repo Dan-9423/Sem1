@@ -13,7 +13,11 @@ interface VariaveisRelatorio {
 interface VariavelPosicionada extends ReportVariable {
   id: string;
   label: string;
+  width?: number;
+  isResizing?: boolean;
 }
+
+const fontFamilies = ['Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'];
 
 export function Relatorio() {
   const [variaveis, setVariaveis] = useState<VariaveisRelatorio>({
@@ -32,6 +36,7 @@ export function Relatorio() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [activeElement, setActiveElement] = useState<string | null>(null);
+  const [resizeStart, setResizeStart] = useState<{ x: number; width: number } | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -82,6 +87,39 @@ export function Relatorio() {
     };
   }, [isDragging, activeElement, isModalOpen, modalScale, scale, dragOffset]);
 
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (activeElement && resizeStart) {
+        e.preventDefault();
+        const container = isModalOpen ? modalPreviewRef.current : previewRef.current;
+        if (!container) return;
+
+        const rect = container.getBoundingClientRect();
+        const currentScale = isModalOpen ? modalScale : scale;
+        const deltaX = (e.clientX - rect.left) / currentScale - resizeStart.x;
+        const newWidth = Math.max(100, resizeStart.width + deltaX);
+
+        setVariaveisPosicionadas(prev =>
+          prev.map(v => v.id === activeElement ? { ...v, width: newWidth } : v)
+        );
+      }
+    };
+
+    const handleMouseUp = () => {
+      setResizeStart(null);
+    };
+
+    if (resizeStart) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizeStart, activeElement, isModalOpen, modalScale, scale]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setVariaveis(prev => ({ ...prev, [name]: value }));
@@ -121,6 +159,20 @@ export function Relatorio() {
     });
     setActiveElement(id);
     setIsDragging(true);
+  };
+
+  const handleResizeStart = (e: React.MouseEvent, id: string, currentWidth: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const container = isModalOpen ? modalPreviewRef.current : previewRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const currentScale = isModalOpen ? modalScale : scale;
+    const x = (e.clientX - rect.left) / currentScale;
+    
+    setActiveElement(id);
+    setResizeStart({ x, width: currentWidth });
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -172,6 +224,12 @@ export function Relatorio() {
     );
   };
 
+  const handleFontFamilyChange = (id: string, fontFamily: string) => {
+    setVariaveisPosicionadas(prev =>
+      prev.map(v => v.id === id ? { ...v, fontFamily } : v)
+    );
+  };
+
   const handleGerarRelatorio = () => {
     if (!svgBackground) {
       alert('Por favor, faça upload de um SVG primeiro');
@@ -207,8 +265,8 @@ export function Relatorio() {
       style={{
         transform: `scale(${currentScale})`,
         transformOrigin: 'top left',
-        width: `${100 / currentScale}%`,
-        height: `${100 / currentScale}%`
+        width: svgBackground ? `${svgBackground.width}px` : '100%',
+        height: svgBackground ? `${svgBackground.height}px` : '100%'
       }}
     >
       <div
@@ -216,58 +274,90 @@ export function Relatorio() {
         className="absolute inset-0"
       />
       {variaveisPosicionadas.map((variavel) => (
-        <div key={variavel.id} className="absolute">
+        <div
+          key={variavel.id}
+          className="absolute"
+          style={{
+            left: `${variavel.x}px`,
+            top: `${variavel.y}px`,
+          }}
+        >
           <div
             className={`cursor-move select-none group ${
               activeElement === variavel.id ? 'ring-2 ring-blue-500' : ''
             }`}
             style={{
               fontSize: `${variavel.fontSize}px`,
+              fontFamily: variavel.fontFamily || 'Arial',
               color: variavel.color,
+              width: variavel.width ? `${variavel.width}px` : 'auto',
+              wordWrap: 'break-word',
               userSelect: 'none',
               WebkitUserSelect: 'none',
               position: 'relative',
-              left: `${variavel.x}px`,
-              top: `${variavel.y}px`,
             }}
             onMouseDown={(e) => handleElementDragStart(e, variavel.id)}
           >
             {variavel.text || `[${variavel.label}]`}
             
-            {/* Controles de tamanho da fonte */}
+            {/* Borda de redimensionamento */}
+            {activeElement === variavel.id && (
+              <div
+                className="absolute top-0 right-0 bottom-0 w-2 cursor-ew-resize hover:bg-blue-200"
+                onMouseDown={(e) => handleResizeStart(e, variavel.id, variavel.width || 100)}
+              />
+            )}
+            
+            {/* Controles de estilo */}
             <div
-              className={`absolute -top-10 left-0 bg-white shadow-lg rounded-lg p-1 flex items-center gap-1 ${
+              className={`absolute -top-32 left-0 bg-white shadow-lg rounded-lg p-1 flex flex-col gap-1 ${
                 activeElement === variavel.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
               } transition-opacity`}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <button
-                onClick={() => handleFontSizeChange(variavel.id, -2)}
-                className="p-1 hover:bg-gray-100 rounded"
-                title="Diminuir fonte"
-              >
-                <Minus size={16} />
-              </button>
-              <div className="flex items-center gap-1 px-2 border-x">
-                <Type size={16} />
-                <span className="text-sm min-w-[2rem] text-center">
-                  {variavel.fontSize}
-                </span>
+              {/* Controles de fonte */}
+              <div className="flex items-center gap-1 p-1 border-b">
+                <select
+                  value={variavel.fontFamily || 'Arial'}
+                  onChange={(e) => handleFontFamilyChange(variavel.id, e.target.value)}
+                  className="text-sm p-1 border rounded"
+                >
+                  {fontFamilies.map(font => (
+                    <option key={font} value={font}>{font}</option>
+                  ))}
+                </select>
               </div>
-              <button
-                onClick={() => handleFontSizeChange(variavel.id, 2)}
-                className="p-1 hover:bg-gray-100 rounded"
-                title="Aumentar fonte"
-              >
-                <Plus size={16} />
-              </button>
-              <button
-                onClick={() => handleResetFontSize(variavel.id)}
-                className="p-1 hover:bg-gray-100 rounded"
-                title="Resetar tamanho"
-              >
-                <RotateCcw size={16} />
-              </button>
+              
+              {/* Controles de tamanho da fonte */}
+              <div className="flex items-center gap-1 p-1">
+                <button
+                  onClick={() => handleFontSizeChange(variavel.id, -2)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                  title="Diminuir fonte"
+                >
+                  <Minus size={16} />
+                </button>
+                <div className="flex items-center gap-1 px-2 border-x">
+                  <Type size={16} />
+                  <span className="text-sm min-w-[2rem] text-center">
+                    {variavel.fontSize}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleFontSizeChange(variavel.id, 2)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                  title="Aumentar fonte"
+                >
+                  <Plus size={16} />
+                </button>
+                <button
+                  onClick={() => handleResetFontSize(variavel.id)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                  title="Resetar tamanho"
+                >
+                  <RotateCcw size={16} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
